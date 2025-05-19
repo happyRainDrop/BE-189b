@@ -19,7 +19,7 @@ def clear_errors(odrv0):
     odrv0.clear_errors()
     # print("All errors cleared on ODrive")
 
-def set_torque(
+def set_torque_then_position(
     odrv0,
     axis,
     target_torque,
