@@ -17,9 +17,9 @@ def clear_errors(odrv0):
     if odrv0.axis0.active_errors != 0:
         dump_errors(odrv0)
     odrv0.clear_errors()
-    print("All errors cleared on ODrive")
+    # print("All errors cleared on ODrive")
 
-def set_torque_then_position(
+def set_torque(
     odrv0,
     axis,
     target_torque,
@@ -43,7 +43,7 @@ def set_torque_then_position(
     - position_ramp_delay: Delay between position steps (seconds)
     """
 
-    verbose = True
+    verbose = False
 
     # --- Ramp Torque ---
 
@@ -83,6 +83,7 @@ def set_torque_then_position(
 
     time.sleep(0.2)
 
+    '''
     # --- Ramp Position ---
     current_position = axis.pos_estimate 
     num_position_set_failures = 0
@@ -101,7 +102,6 @@ def set_torque_then_position(
             if verbose:  print(f" -> Position setpoint: {current_position:.3f}")
 
             # Don't get stuck here forever
-            #'''
             if ((current_position < target_position and axis.pos_estimate  < current_position) or 
                 (current_position > target_position and axis.pos_estimate  > current_position)):
                 num_position_set_failures += 1
@@ -111,7 +111,6 @@ def set_torque_then_position(
                 # simply give up
                 if verbose: print("QUITTING.")
                 return
-            #'''
 
             if verbose:  print(f" -> Position: {axis.pos_estimate:.2f}")
             current_position = axis.pos_estimate 
@@ -120,6 +119,8 @@ def set_torque_then_position(
         # Final position set
         axis.controller.input_pos = target_position
         if verbose:  print(f" -> Final Position: {target_position:.2f}")
+    # '''
+
 
 def go_to_start_position(start_position, axis, position_step = 0.05, position_ramp_delay=0.02):
 
@@ -213,9 +214,12 @@ max_user_failures_before_easing_up = 5
 try:
     # Setup
     odrv0 = find_odrive()
-    odrv0.axis0.controller.config.vel_limit = 5.0    # Limiting the velocity (rad/s)
-    odrv0.axis0.controller.config.vel_gain = 0.1      # Lower vel_gain for smoother motion
-
+    odrv0.axis0.controller.config.vel_limit = 15.0    # Limiting the velocity (rad/s)
+    odrv0.axis0.controller.config.vel_gain = 0.2      # Lower vel_gain for smoother motion
+    odrv0.axis0.config.motor.current_soft_max = 80    # The Flipsky can keep 
+    odrv0.axis0.config.motor.current_hard_max = 80    
+    
+    # odrv0.axis0.pos_estimate = 0  # Uncomment to set the current position as 0
 
     clear_errors(odrv0)
     axis = odrv0.axis0
