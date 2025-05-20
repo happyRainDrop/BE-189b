@@ -108,7 +108,7 @@ def fight_user(odrv0):
     '''
     start_relaxing_position_thresh = -0.75
     modes = ["Gentle", "Hardcore"]
-    mode_index = 1
+    mode_index = 0
 
     axis = odrv0.axis0
     curr_torque = axis.controller.effective_torque_setpoint
