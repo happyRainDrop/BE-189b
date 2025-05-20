@@ -19,19 +19,16 @@ def clear_errors(odrv0):
     odrv0.clear_errors()
     # print("All errors cleared on ODrive")
 
-def set_torque_then_position(
+def set_torque(
     odrv0,
     axis,
     target_torque,
-    target_position,
     torque_step=0.01,
     torque_ramp_delay=0.05,
-    position_step=0.01,
-    position_ramp_delay=0.05, 
     max_power_supply_curr = 15
 ):
     """
-    Set torque first with ramp-up, then ramp position to target.
+    Set torque first with ramp-up.
 
     Parameters:
     - axis: ODrive axis (e.g., odrv0.axis0)
@@ -81,46 +78,6 @@ def set_torque_then_position(
     if verbose:  
         print(f" -> Final Torque Setpoint: {target_torque:.2f} Nm, actual {axis.controller.effective_torque_setpoint}")
 
-    time.sleep(0.2)
-
-    '''
-    # --- Ramp Position ---
-    current_position = axis.pos_estimate 
-    num_position_set_failures = 0
-    if verbose:  print(f"[Position Ramp] Switching to POSITION_CONTROL with goal {target_position} starting from {current_position}")
-    axis.controller.config.input_mode = InputMode.PASSTHROUGH
-    axis.controller.config.control_mode = ControlMode.POSITION_CONTROL
-    request_state(axis, AxisState.CLOSED_LOOP_CONTROL)
-    time.sleep(0.1)
-
-    if (abs(current_position) < abs(target_position)):
-        # Only move if torque mode didn't move us
-
-        while abs(current_position - target_position) > abs(position_step):
-            current_position = (current_position + position_step) if target_position > current_position else (current_position-position_step)
-            axis.controller.input_pos = current_position
-            if verbose:  print(f" -> Position setpoint: {current_position:.3f}")
-
-            # Don't get stuck here forever
-            if ((current_position < target_position and axis.pos_estimate  < current_position) or 
-                (current_position > target_position and axis.pos_estimate  > current_position)):
-                num_position_set_failures += 1
-            else:
-                num_position_set_failures = 0
-            if (num_position_set_failures > 5):
-                # simply give up
-                if verbose: print("QUITTING.")
-                return
-
-            if verbose:  print(f" -> Position: {axis.pos_estimate:.2f}")
-            current_position = axis.pos_estimate 
-            time.sleep(position_ramp_delay)
-
-        # Final position set
-        axis.controller.input_pos = target_position
-        if verbose:  print(f" -> Final Position: {target_position:.2f}")
-    # '''
-
 
 def go_to_start_position(start_position, axis, position_step = 0.05, position_ramp_delay=0.02):
 
@@ -148,47 +105,53 @@ def go_to_start_position(start_position, axis, position_step = 0.05, position_ra
     return
     
 def fight_user(odrv0):
+    '''
+    If it detects it is not moving, sets torque higher
+    '''
+
+    start_relaxing_position_thresh = -0.5
 
     axis = odrv0.axis0
     curr_torque = axis.controller.effective_torque_setpoint
     curr_current = odrv0.ibus
     curr_position = axis.pos_estimate
-    print(f"START: current on DC bus: {curr_current:.3f} A  ||   effective torque: {curr_current:.3f} Nm  ||   current position: {curr_position:.3f}")
+    print(f"START: current on DC bus: {curr_current:.3f} A  ||   effective torque: {curr_torque:.3f} Nm  ||   current position: {curr_position:.3f}")
     time.sleep(0.5)
 
     desired_torque = curr_torque
-    desired_position = curr_position
     last_position = curr_position
     num_user_failures = 0
     num_machine_failures = 0
     
     # FIGHT THE USER
     while (abs(max_position) - abs(curr_position) > winning_thresh):
-        if (abs(last_position) <= abs(curr_position)):
+        if (abs(curr_position) < abs(last_position) or abs(curr_position) < abs(start_relaxing_position_thresh)):
             # Oh no! We are loosing! Up the torque!
             num_machine_failures += 1
             num_user_failures = 0
             desired_torque = curr_torque+torque_step*num_machine_failures
-            desired_position = curr_position+position_step
-            set_torque_then_position(odrv0=odrv0, axis=axis, target_torque=desired_torque, target_position=desired_position)
-            print(f"    user winning!     desired torque: {curr_current:.3f} Nm  ||   desired position: {curr_position:.3f}")
+            set_torque(odrv0=odrv0, axis=axis, target_torque=desired_torque)
+            print(f"    user winning!     desired torque: {desired_torque:.3f} Nm  ||   curr position: {curr_position:.3f}")
         else:
             # We have maintained position or pushed it forward.
             num_user_failures += 1
             num_machine_failures = 0
             if (num_user_failures > max_user_failures_before_easing_up):
                 # Ease up on the torque
-                desired_torque = curr_torque-torque_step
-                desired_position = curr_position+position_step
-                set_torque_then_position(odrv0=odrv0, axis=axis, target_torque=desired_torque, target_position=desired_position)
-                print(f"    user losing!     desired torque: {curr_current:.3f} Nm  ||   desired position: {curr_position:.3f}")
+                desired_torque = curr_torque-torque_step if (abs(curr_torque-torque_step)<abs(curr_torque)) else 0
+                set_torque(odrv0=odrv0, axis=axis, target_torque=desired_torque)
+                print(f"    user losing!     desired torque: {desired_torque:.3f} Nm  ||  curr position: {curr_position:.3f}")
                 num_user_failures = 0
+            else:
+                # Keep the same torque -- let them fight!
+                print(f"    user losing!     desired torque: {desired_torque:.3f} Nm  ||  curr position: {curr_position:.3f} FAIL TIMES {num_user_failures}")
         
         curr_torque = axis.controller.effective_torque_setpoint
         curr_current = odrv0.ibus
+        last_position = curr_position
         curr_position = axis.pos_estimate
 
-        print(f"current on DC bus: {curr_current:.3f} A  ||   effective torque: {curr_current:.3f} Nm  ||   current position: {curr_position:.3f}")
+        print(f"current on DC bus: {curr_current:.3f} A  ||   effective torque: {curr_torque:.3f} Nm  ||   current position: {curr_position:.3f}")
         clear_errors(odrv0)
 
         time.sleep(0.1)
@@ -201,7 +164,7 @@ def fight_user(odrv0):
 
 # Constants
 start_position = 0.0
-max_position = -4.40       # hehe funny number but it's true
+max_position = -4.20       # hehe funny number but it's true
 position_step = -0.1       # position increment (in encoder counts or turns)
 max_torque = -18            # target torque (Amps)
 torque_step = -0.05         # increment per cycle
@@ -214,9 +177,11 @@ max_user_failures_before_easing_up = 5
 try:
     # Setup
     odrv0 = find_odrive()
-    odrv0.axis0.controller.config.vel_limit = 15.0    # Limiting the velocity (rad/s)
-    odrv0.axis0.controller.config.vel_gain = 0.2      # Lower vel_gain for smoother motion
-    odrv0.axis0.config.motor.current_soft_max = 80    # The Flipsky can keep 
+
+    # Confirming config settings
+    odrv0.axis0.controller.config.vel_limit = 10.0    # Limiting the velocity (rad/s)
+    odrv0.axis0.controller.config.vel_gain = 0.1      # Lower vel_gain for smoother motion
+    odrv0.axis0.config.motor.current_soft_max = 80    # The Flipsky can take up to 80A 
     odrv0.axis0.config.motor.current_hard_max = 80    
     
     # odrv0.axis0.pos_estimate = 0  # Uncomment to set the current position as 0
