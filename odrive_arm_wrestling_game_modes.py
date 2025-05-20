@@ -273,13 +273,13 @@ try:
     odrv0.axis0.config.motor.current_hard_max = 80    
     odrv0.axis0.config.motor.current_control_bandwidth = 200
     
-    odrv0.axis0.pos_estimate = 0  # Uncomment to set the current position as 0
+    # odrv0.axis0.pos_estimate = 0  # Uncomment to set the current position as 0
 
     clear_errors(odrv0)
     axis = odrv0.axis0
 
     fight_user(odrv0)
-    # constant_torque_mode(odrv0, begin_fight_pos=max_position, torque_setpoint= -2.5)
+    # constant_torque_mode(odrv0, begin_fight_pos=max_position, torque_setpoint= -0.35)
 
     odrv0.axis0.requested_state = AxisState.IDLE
 
