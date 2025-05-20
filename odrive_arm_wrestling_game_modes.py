@@ -36,7 +36,7 @@ def set_torque(odrv0, axis, target_torque, torque_step=0.01, torque_ramp_delay=0
     - position_ramp_delay: Delay between position steps (seconds)
     """
 
-    verbose = True
+    verbose = False
 
     # --- Ramp Torque ---
 
@@ -60,7 +60,7 @@ def set_torque(odrv0, axis, target_torque, torque_step=0.01, torque_ramp_delay=0
             num_current_set_failures += 1
         else:
             num_current_set_failures = 0
-        if (num_current_set_failures > 10):
+        if (num_current_set_failures > 5):
             # simply give up
             if verbose: print("QUITTING.")
             break
@@ -182,22 +182,21 @@ def fight_user(odrv0):
         time.sleep(0.1)
 
     print("Machine has won.")
-    time.sleep(1)
-    set_position(target_position=start_position, axis=axis)
-
     # Final stats
     total_time = time.time() - start_time
     avg_torque = sum(torque_log) / len(torque_log) if torque_log else 0
+    plt.ioff()
+    plt.close(fig)
+
+    # Reset position
+    time.sleep(1)
+    set_position(target_position=start_position, axis=axis)
 
     # Save CSV
     df = pd.DataFrame({'time_sec': time_log, 'torque_Nm': torque_log})
     filename = f"logs/torque_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     df.to_csv(filename, index=False)
     print(f"Saved torque log to {filename}")
-
-    plt.ioff()
-    plt.show()
-    plt.close(fig)
 
     # Add subtitle with stats
     subtitle = f"Average Torque: {avg_torque:.2f} Nm | Total Time: {total_time:.2f} s | Mode: {modes[mode_index]}"
@@ -254,7 +253,7 @@ def constant_torque_mode(odrv0, begin_fight_pos, torque_setpoint = -1):
 
 # Constants
 start_position = 0.0
-max_position = -4.10       # hehe funny number but it's true
+max_position = -4.0       # hehe funny number but it's true
 position_step = -0.1       # position increment (in encoder counts or turns)
 torque_step = -0.05         # increment per cycle
 pause_between_modes = 0.1  # seconds to pause between mode switches
@@ -268,22 +267,27 @@ try:
     odrv0 = find_odrive()
 
     # Confirming config settings
-    odrv0.axis0.controller.config.vel_limit = 10.0    # Limiting the velocity (rad/s)
-    odrv0.axis0.controller.config.vel_gain = 0.1      # Lower vel_gain for smoother motion
+    odrv0.axis0.controller.config.vel_limit = 20.0    # Limiting the velocity (rad/s). LIMITS EFFECTIVE TORQUE SETPOINT
+    odrv0.axis0.controller.config.vel_gain = 0.5      # Lower vel_gain for smoother motion. LIMITS EFFECTIVE TORQUE SETPOINT
     odrv0.axis0.config.motor.current_soft_max = 80    # The Flipsky can take up to 80A 
     odrv0.axis0.config.motor.current_hard_max = 80    
+    odrv0.axis0.config.motor.current_control_bandwidth = 200
     
-    # odrv0.axis0.pos_estimate = 0  # Uncomment to set the current position as 0
+    odrv0.axis0.pos_estimate = 0  # Uncomment to set the current position as 0
 
     clear_errors(odrv0)
     axis = odrv0.axis0
 
     fight_user(odrv0)
-    # constant_torque_mode(odrv0, begin_fight_pos=max_position, torque_setpoint= -0.2)
+    # constant_torque_mode(odrv0, begin_fight_pos=max_position, torque_setpoint= -2.5)
 
     odrv0.axis0.requested_state = AxisState.IDLE
 
-    
 except KeyboardInterrupt:
     print("Stopping motor...")
+    odrv0.axis0.requested_state = AxisState.IDLE    
+except Exception as e:
+    print(f"An error occurred: {e}")
+    print("Stopping motor...")
+    clear_errors(odrv0)
     odrv0.axis0.requested_state = AxisState.IDLE
