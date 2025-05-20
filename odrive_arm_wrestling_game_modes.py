@@ -161,6 +161,8 @@ def constant_torque_mode(odrv0, begin_fight_pos, torque_setpoint = -1):
     Go to begin_fight_pos and apply constant torque from there.
     '''
 
+    min_dist_from_start = 0.1
+
     # Lower to the start position, which the user will fight against
     axis = odrv0.axis0
     print("Standby. Reving up to position.")
@@ -174,7 +176,7 @@ def constant_torque_mode(odrv0, begin_fight_pos, torque_setpoint = -1):
     
 
     # FIGHT THE USER
-    while (abs(curr_position) > curr_position):
+    while (abs(curr_position) - abs(start_position) > min_dist_from_start):
         set_torque(odrv0=odrv0, axis=axis, target_torque=torque_setpoint)
 
         curr_torque = axis.controller.effective_torque_setpoint
@@ -193,7 +195,7 @@ def constant_torque_mode(odrv0, begin_fight_pos, torque_setpoint = -1):
 
 # Constants
 start_position = 0.0
-max_position = -4.20       # hehe funny number but it's true
+max_position = -4.10       # hehe funny number but it's true
 position_step = -0.1       # position increment (in encoder counts or turns)
 torque_step = -0.05         # increment per cycle
 pause_between_modes = 0.1  # seconds to pause between mode switches
@@ -217,8 +219,8 @@ try:
     clear_errors(odrv0)
     axis = odrv0.axis0
 
-    # fight_user(odrv0)
-    constant_torque_mode(odrv0, begin_fight_pos=max_position, torque_setpoint= -0.3)
+    fight_user(odrv0)
+    # constant_torque_mode(odrv0, begin_fight_pos=max_position, torque_setpoint= -0.2)
 
     odrv0.axis0.requested_state = AxisState.IDLE
 
