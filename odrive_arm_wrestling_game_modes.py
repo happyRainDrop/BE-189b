@@ -19,14 +19,7 @@ def clear_errors(odrv0):
     odrv0.clear_errors()
     # print("All errors cleared on ODrive")
 
-def set_torque(
-    odrv0,
-    axis,
-    target_torque,
-    torque_step=0.01,
-    torque_ramp_delay=0.05,
-    max_power_supply_curr = 15
-):
+def set_torque(odrv0, axis, target_torque, torque_step=0.01, torque_ramp_delay=0.05, max_power_supply_curr = 15):
     """
     Set torque first with ramp-up.
 
@@ -78,32 +71,31 @@ def set_torque(
     if verbose:  
         print(f" -> Final Torque Setpoint: {target_torque:.2f} Nm, actual {axis.controller.effective_torque_setpoint}")
 
-
-def go_to_start_position(start_position, axis, position_step = 0.05, position_ramp_delay=0.02):
+def set_position(target_position, axis, position_step = 0.05, position_ramp_delay=0.02):
 
     # Enter closed loop control
     axis.controller.config.input_mode = InputMode.PASSTHROUGH
     axis.controller.config.control_mode = ControlMode.POSITION_CONTROL
     request_state(odrv0.axis0, AxisState.CLOSED_LOOP_CONTROL)
 
-    print(f"Going to start position at {start_position}")
+    print(f"Going to start position at {target_position}")
     curr_position = axis.pos_estimate
 
-    while(curr_position > start_position):
+    while(curr_position > target_position):
         curr_position -= position_step
         odrv0.axis0.controller.input_pos = curr_position
         curr_position = axis.pos_estimate
         time.sleep(position_ramp_delay)
 
-    while(curr_position < start_position):
+    while(curr_position < target_position):
         curr_position += position_step
         odrv0.axis0.controller.input_pos = curr_position
         curr_position = axis.pos_estimate
         time.sleep(position_ramp_delay)
 
-    odrv0.axis0.controller.input_pos = start_position
+    odrv0.axis0.controller.input_pos = target_position
     return
-    
+
 def fight_user(odrv0):
     '''
     If it detects it is not moving, sets torque higher
@@ -123,6 +115,9 @@ def fight_user(odrv0):
     num_user_failures = 0
     num_machine_failures = 0
     
+    # Start with the arm up
+    set_position(target_position=start_position, axis=axis)
+
     # FIGHT THE USER
     while (abs(max_position) - abs(curr_position) > winning_thresh):
         if (abs(curr_position) < abs(last_position) or abs(curr_position) < abs(start_relaxing_position_thresh)):
@@ -158,7 +153,41 @@ def fight_user(odrv0):
 
     print("Machine has won.")
     time.sleep(1)
-    go_to_start_position(start_position=start_position, axis=axis)
+    set_position(target_position=start_position, axis=axis)
+    return
+
+def constant_torque_mode(odrv0, begin_fight_pos, torque_setpoint = -1):
+    '''
+    Go to begin_fight_pos and apply constant torque from there.
+    '''
+
+    # Lower to the start position, which the user will fight against
+    axis = odrv0.axis0
+    print("Standby. Reving up to position.")
+    set_position(target_position=begin_fight_pos, axis=axis)
+    print("Go ahead.")
+
+    curr_torque = axis.controller.effective_torque_setpoint
+    curr_current = odrv0.ibus
+    curr_position = axis.pos_estimate
+    print(f"START: current on DC bus: {curr_current:.3f} A  ||   effective torque: {curr_torque:.3f} Nm  ||   current position: {curr_position:.3f}")
+    
+
+    # FIGHT THE USER
+    while (abs(curr_position) > curr_position):
+        set_torque(odrv0=odrv0, axis=axis, target_torque=torque_setpoint)
+
+        curr_torque = axis.controller.effective_torque_setpoint
+        curr_current = odrv0.ibus
+        curr_position = axis.pos_estimate
+
+        print(f"current on DC bus: {curr_current:.3f} A  ||   effective torque: {curr_torque:.3f} Nm  ||   current position: {curr_position:.3f}")
+        clear_errors(odrv0)
+        time.sleep(0.1)
+
+    print("User has won.")
+    time.sleep(1)
+    set_position(target_position=start_position, axis=axis)
     return
 
 
@@ -166,7 +195,6 @@ def fight_user(odrv0):
 start_position = 0.0
 max_position = -4.20       # hehe funny number but it's true
 position_step = -0.1       # position increment (in encoder counts or turns)
-max_torque = -18            # target torque (Amps)
 torque_step = -0.05         # increment per cycle
 pause_between_modes = 0.1  # seconds to pause between mode switches
 
@@ -189,8 +217,9 @@ try:
     clear_errors(odrv0)
     axis = odrv0.axis0
 
-    go_to_start_position(start_position=start_position, axis=axis)
-    fight_user(odrv0)
+    # fight_user(odrv0)
+    constant_torque_mode(odrv0, begin_fight_pos=max_position, torque_setpoint= -0.3)
+
     odrv0.axis0.requested_state = AxisState.IDLE
 
     
