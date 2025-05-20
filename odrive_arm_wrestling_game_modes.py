@@ -5,6 +5,9 @@ import odrive
 from odrive.enums import AxisState, ControlMode, InputMode
 from odrive.utils import dump_errors, request_state
 import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from datetime import datetime
 
 # Helper functions
 def find_odrive():
@@ -33,7 +36,7 @@ def set_torque(odrv0, axis, target_torque, torque_step=0.01, torque_ramp_delay=0
     - position_ramp_delay: Delay between position steps (seconds)
     """
 
-    verbose = False
+    verbose = True
 
     # --- Ramp Torque ---
 
@@ -47,7 +50,7 @@ def set_torque(odrv0, axis, target_torque, torque_step=0.01, torque_ramp_delay=0
 
     while abs(current_torque - target_torque) > abs(torque_step):
         current_torque = (current_torque + torque_step) if target_torque > current_torque else (current_torque-torque_step)
-        if verbose:  print(f" -> Torque setpoint: {current_torque:.3f} Nm")
+        if verbose: print(f" -> Commanded Torque: {axis.controller.input_torque}, Effective Torque: {axis.controller.effective_torque_setpoint}")
         if (odrv0.ibus >= max_power_supply_curr): break
         axis.controller.input_torque = current_torque
 
@@ -57,7 +60,7 @@ def set_torque(odrv0, axis, target_torque, torque_step=0.01, torque_ramp_delay=0
             num_current_set_failures += 1
         else:
             num_current_set_failures = 0
-        if (num_current_set_failures > 5):
+        if (num_current_set_failures > 10):
             # simply give up
             if verbose: print("QUITTING.")
             break
@@ -98,10 +101,14 @@ def set_position(target_position, axis, position_step = 0.05, position_ramp_dela
 
 def fight_user(odrv0):
     '''
-    If it detects it is not moving, sets torque higher
+    If it detects it is not moving, sets torque higher.
+    Streams a plot of torque over time and saves torque log.
+    Gentle mode: Decreases torque when user at a standstill
+    Else, keeps increasing it
     '''
-
-    start_relaxing_position_thresh = -0.5
+    start_relaxing_position_thresh = -0.75
+    modes = ["Gentle", "Hardcore"]
+    mode_index = 1
 
     axis = odrv0.axis0
     curr_torque = axis.controller.effective_torque_setpoint
@@ -114,47 +121,99 @@ def fight_user(odrv0):
     last_position = curr_position
     num_user_failures = 0
     num_machine_failures = 0
-    
+
+    torque_log = []
+    time_log = []
+    start_time = time.time()
+
+    # Plot setup
+    plt.ion()
+    fig, ax = plt.subplots()
+    line, = ax.plot([], [], label='Torque (Nm)')
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Effective Torque (Nm)')
+    ax.set_title('Torque vs Time')
+    ax.grid(True)
+    ax.legend()
+
     # Start with the arm up
     set_position(target_position=start_position, axis=axis)
 
-    # FIGHT THE USER
     while (abs(max_position) - abs(curr_position) > winning_thresh):
-        if (abs(curr_position) < abs(last_position) or abs(curr_position) < abs(start_relaxing_position_thresh)):
-            # Oh no! We are loosing! Up the torque!
+        timestamp = time.time() - start_time
+        curr_torque = axis.controller.effective_torque_setpoint
+        curr_position = axis.pos_estimate
+
+        if ((abs(curr_position) < abs(last_position) and mode_index == 0)
+            or (abs(curr_position) <= abs(last_position) and mode_index == 1) 
+            or (abs(curr_position) < abs(start_relaxing_position_thresh))):
+
             num_machine_failures += 1
             num_user_failures = 0
-            desired_torque = curr_torque+torque_step*num_machine_failures
+            desired_torque = curr_torque + torque_step * num_machine_failures
             set_torque(odrv0=odrv0, axis=axis, target_torque=desired_torque)
             print(f"    user winning!     desired torque: {desired_torque:.3f} Nm  ||   curr position: {curr_position:.3f}")
         else:
-            # We have maintained position or pushed it forward.
             num_user_failures += 1
             num_machine_failures = 0
-            if (num_user_failures > max_user_failures_before_easing_up):
-                # Ease up on the torque
-                desired_torque = curr_torque-torque_step if (abs(curr_torque-torque_step)<abs(curr_torque)) else 0
+            if num_user_failures > max_user_failures_before_easing_up:
+                desired_torque = curr_torque - torque_step if (abs(curr_torque - torque_step) < abs(curr_torque)) else 0
                 set_torque(odrv0=odrv0, axis=axis, target_torque=desired_torque)
                 print(f"    user losing!     desired torque: {desired_torque:.3f} Nm  ||  curr position: {curr_position:.3f}")
                 num_user_failures = 0
             else:
-                # Keep the same torque -- let them fight!
                 print(f"    user losing!     desired torque: {desired_torque:.3f} Nm  ||  curr position: {curr_position:.3f} FAIL TIMES {num_user_failures}")
-        
-        curr_torque = axis.controller.effective_torque_setpoint
-        curr_current = odrv0.ibus
+
         last_position = curr_position
-        curr_position = axis.pos_estimate
 
-        print(f"current on DC bus: {curr_current:.3f} A  ||   effective torque: {curr_torque:.3f} Nm  ||   current position: {curr_position:.3f}")
+        # Log torque data
+        torque_log.append(abs(curr_torque))
+        time_log.append(timestamp)
+
+        # Update live plot
+        line.set_xdata(time_log)
+        line.set_ydata(torque_log)
+        ax.relim()
+        ax.autoscale_view()
+        plt.pause(0.01)
+
+        print(f"current on DC bus: {odrv0.ibus:.3f} A  ||   effective torque: {curr_torque:.3f} Nm  ||   current position: {curr_position:.3f}")
         clear_errors(odrv0)
-
         time.sleep(0.1)
 
     print("Machine has won.")
     time.sleep(1)
     set_position(target_position=start_position, axis=axis)
-    return
+
+    # Final stats
+    total_time = time.time() - start_time
+    avg_torque = sum(torque_log) / len(torque_log) if torque_log else 0
+
+    # Save CSV
+    df = pd.DataFrame({'time_sec': time_log, 'torque_Nm': torque_log})
+    filename = f"logs/torque_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    df.to_csv(filename, index=False)
+    print(f"Saved torque log to {filename}")
+
+    plt.ioff()
+    plt.show()
+    plt.close(fig)
+
+    # Add subtitle with stats
+    subtitle = f"Average Torque: {avg_torque:.2f} Nm | Total Time: {total_time:.2f} s | Mode: {modes[mode_index]}"
+    ax.set_title('Torque vs Time\n' + subtitle)
+
+    # Save the figure
+    plot_filename = filename.replace(".csv", ".png")
+    fig.savefig(plot_filename)
+    print(f"Saved torque plot to {plot_filename}")
+
+    return {
+        "total_time_sec": total_time,
+        "average_torque_Nm": avg_torque,
+        "csv_file": filename,
+        "plot_file": plot_filename
+    }
 
 def constant_torque_mode(odrv0, begin_fight_pos, torque_setpoint = -1):
     '''
