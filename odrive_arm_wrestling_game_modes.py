@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import time
 import odrive
 from odrive.enums import AxisState, ControlMode, InputMode
@@ -8,8 +6,48 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
+import serial.tools.list_ports
+import serial
+import threading
+import queue
 
-# Helper functions
+emg_data = []
+emg_timestamps = []
+emg_queue = queue.Queue()
+
+
+# Helper functions: Arduino
+
+def find_arduino(baud_rate=9600, timeout=2):
+    """
+    Scans available serial ports for an Arduino device by checking for known USB VID/PID
+    and/or testing for readable output.
+
+    Returns:
+        A string with the port name (e.g., 'COM3') or None if not found.
+    """
+    arduino_vids = ["2341", "1A86", "10C4", "2A03"]  # Known Arduino/CH340/Silabs VIDs
+    ports = serial.tools.list_ports.comports()
+
+    for port in ports:
+        # Try to match based on known vendor IDs
+        if (port.vid and f"{port.vid:04X}" in arduino_vids) or "Arduino" in port.description:
+            print(f"Found potential Arduino on {port.device} ({port.description})")
+            try:
+                with serial.Serial(port.device, baud_rate, timeout=timeout) as ser:
+                    ser.flushInput()
+                    line = ser.readline().decode('utf-8').strip()
+                    if line:
+                        print(f"  Read test successful: {line}")
+                        return port.device
+            except Exception as e:
+                print(f"  Failed to read from {port.device}: {e}")
+
+    print("No Arduino found.")
+    return None
+
+
+# Helper functions: Odrive
 def find_odrive():
     print("Waiting for ODrive...")
     odrv0 = odrive.find_sync()
@@ -108,7 +146,8 @@ def fight_user(odrv0):
     '''
     start_relaxing_position_thresh = -0.75
     modes = ["Gentle", "Hardcore"]
-    mode_index = 0
+    mode_index = 1
+    user_win = False
 
     axis = odrv0.axis0
     curr_torque = axis.controller.effective_torque_setpoint
@@ -121,6 +160,7 @@ def fight_user(odrv0):
     last_position = curr_position
     num_user_failures = 0
     num_machine_failures = 0
+    num_max_torque_times = 0
 
     torque_log = []
     time_log = []
@@ -138,6 +178,7 @@ def fight_user(odrv0):
 
     # Start with the arm up
     set_position(target_position=start_position, axis=axis)
+    set_torque(odrv0=odrv0, axis=axis, target_torque=0)
 
     while (abs(max_position) - abs(curr_position) > winning_thresh):
         timestamp = time.time() - start_time
@@ -150,20 +191,34 @@ def fight_user(odrv0):
 
             num_machine_failures += 1
             num_user_failures = 0
+
             desired_torque = curr_torque + torque_step * num_machine_failures
-            set_torque(odrv0=odrv0, axis=axis, target_torque=desired_torque)
+            if (abs(desired_torque) >= abs(max_torque)): desired_torque = max_torque
+
             print(f"    user winning!     desired torque: {desired_torque:.3f} Nm  ||   curr position: {curr_position:.3f}")
+       
         else:
             num_user_failures += 1
             num_machine_failures = 0
             if num_user_failures > max_user_failures_before_easing_up:
                 desired_torque = curr_torque - torque_step if (abs(curr_torque - torque_step) < abs(curr_torque)) else 0
-                set_torque(odrv0=odrv0, axis=axis, target_torque=desired_torque)
+                if (abs(desired_torque) >= abs(max_torque)): desired_torque = max_torque
+
                 print(f"    user losing!     desired torque: {desired_torque:.3f} Nm  ||  curr position: {curr_position:.3f}")
                 num_user_failures = 0
             else:
+                if (abs(desired_torque) >= abs(max_torque)): desired_torque = max_torque
                 print(f"    user losing!     desired torque: {desired_torque:.3f} Nm  ||  curr position: {curr_position:.3f} FAIL TIMES {num_user_failures}")
 
+        ######################################################################## Max torque correction
+        if (abs(curr_torque) >= abs(max_torque)):
+            num_max_torque_times += 1
+            print(f"!!!!!! AT MAX TORQUE: TIME {num_max_torque_times}")
+            if (num_max_torque_times >= max_max_torque_times_before_user_win): break #User has won!
+        else:
+            num_max_torque_times = 0
+        ######################################################################## Write torque, update position
+        set_torque(odrv0=odrv0, axis=axis, target_torque=desired_torque)
         last_position = curr_position
 
         # Log torque data
@@ -181,7 +236,12 @@ def fight_user(odrv0):
         clear_errors(odrv0)
         time.sleep(0.1)
 
-    print("Machine has won.")
+    if (num_max_torque_times >= max_max_torque_times_before_user_win):
+        print("User has won.")
+        user_win = True
+    else:
+        print("Machine has won.")
+
     # Final stats
     total_time = time.time() - start_time
     avg_torque = sum(torque_log) / len(torque_log) if torque_log else 0
@@ -253,14 +313,16 @@ def constant_torque_mode(odrv0, begin_fight_pos, torque_setpoint = -1):
 
 # Constants
 start_position = 0.0
-max_position = -4.0       # hehe funny number but it's true
+max_position = -4.2       # hehe funny number but it's true
 position_step = -0.1       # position increment (in encoder counts or turns)
 torque_step = -0.05         # increment per cycle
 pause_between_modes = 0.1  # seconds to pause between mode switches
+max_torque = -3.48           # Nm
 
 # Game mode stuff
-winning_thresh = 0.25      # within here of the max position, consider the machine to have won
-max_user_failures_before_easing_up = 5
+winning_thresh = 0.1      # within here of the max position, consider the machine to have won
+max_user_failures_before_easing_up = 2
+max_max_torque_times_before_user_win = 15
 
 try:
     # Setup
