@@ -189,7 +189,7 @@ def fight_user(odrv0):
     curr_position = axis.pos_estimate
     time.sleep(0.5)
 
-    desired_torque = curr_torque
+    desired_torque = 0
     last_position = curr_position
     num_user_failures = 0
     num_machine_failures = 0
@@ -361,7 +361,7 @@ def fight_user_emg_based(odrv0):
     print(f"START: current on DC bus: {curr_current:.3f} A  ||   effective torque: {curr_torque:.3f} Nm  ||   current position: {curr_position:.3f}")
     time.sleep(0.5)
 
-    desired_torque = curr_torque
+    desired_torque = 0
     last_position = curr_position
     num_user_failures = 0
     num_machine_failures = 0
@@ -415,7 +415,7 @@ def fight_user_emg_based(odrv0):
         curr_torque = axis.controller.effective_torque_setpoint
         curr_position = axis.pos_estimate
         emg_effort_val = emg_avg_value - relaxed_emg_avg_value
-        # print(f"EMG: effort = {emg_effort_val} = {emg_avg_value} - {relaxed_emg_avg_value}")
+        print(f"EMG: effort = {emg_effort_val} = {emg_avg_value} - {relaxed_emg_avg_value}")
 
         # USER IS WINNING
         if ((abs(curr_position) == abs(last_position) and emg_effort_val < emg_effort_threshold) 
