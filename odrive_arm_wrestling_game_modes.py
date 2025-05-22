@@ -315,8 +315,8 @@ def fight_user(odrv0):
 
     # Reset position
     time.sleep(1)
-    set_position(target_position=start_position, axis=axis)
     set_torque(odrv0=odrv0, axis=axis, target_torque=0)
+    set_position(target_position=start_position, axis=axis)
 
     # Save CSV
     df = pd.DataFrame({'time_sec': time_log, 'torque_Nm': torque_log})
@@ -339,6 +339,210 @@ def fight_user(odrv0):
         "csv_file": filename,
         "plot_file": plot_filename
     }
+
+# Game functions
+def fight_user_emg_based(odrv0):
+    '''
+    If it detects user is flexing hard and arm is not moving, sets torque lower.
+    (Flexing strength dependent on average EMG value)
+    Streams a plot of torque and emg over time.
+    Gentle mode: Decreases torque when user at a standstill
+    Else, keeps increasing it
+    '''
+    # Intialize threshold
+    start_relaxing_position_thresh = -0.75
+    user_win = False
+
+    # Initialize variables
+    axis = odrv0.axis0
+    curr_torque = axis.controller.effective_torque_setpoint
+    curr_current = odrv0.ibus
+    curr_position = axis.pos_estimate
+    print(f"START: current on DC bus: {curr_current:.3f} A  ||   effective torque: {curr_torque:.3f} Nm  ||   current position: {curr_position:.3f}")
+    time.sleep(0.5)
+
+    desired_torque = curr_torque
+    last_position = curr_position
+    num_user_failures = 0
+    num_machine_failures = 0
+    num_max_torque_times = 0
+
+    # NEW: Emg average variables
+    emg_effort_threshold = 0.2   # CONSTANT: when emg_avg_value > threshold + relaxed_emg_value, ease up
+    emg_avg_val_voltages = []
+    emg_avg_val_times = []
+    relaxed_emg_avg_value = -1
+    emg_avg_value = 0
+    emg_effort_val = 0
+
+    # Logging torque and EMG
+    torque_log = []
+    time_log = []
+    start_time = time.time()
+    # Start EMG thread, passing in start_time
+    arduino_port = find_arduino()
+    emg_thread = threading.Thread(
+        target=read_emg_data,
+        kwargs={'serial_port': arduino_port},
+        daemon=True
+    )
+    emg_thread.start()
+
+    # Plot setup
+    plt.ion()
+    fig, (ax_torque, ax_emg) = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+    line_torque, = ax_torque.plot([], [], label='Torque (Nm)')
+    line_raw, = ax_emg.plot([], [], label="Raw EMG", color='pink', alpha=0.6)
+    line_avg, = ax_emg.plot([], [], label="Avg EMG", color='red', linewidth=2)
+            # Torque sublot
+    ax_torque.set_ylabel('Torque (Nm)')
+    ax_torque.set_title('Torque and EMG vs Time')
+    ax_torque.grid(True)
+    ax_torque.legend()
+            # Emg subplot
+    ax_emg.set_xlabel('Time (s)')
+    ax_emg.set_ylabel('EMG Value')
+    ax_emg.grid(True)
+    ax_emg.legend()
+
+
+    # Start with the arm up
+    set_position(target_position=start_position, axis=axis)
+    set_torque(odrv0=odrv0, axis=axis, target_torque=0)
+
+    # Fight user logic
+    while (abs(max_position) - abs(curr_position) > winning_thresh):
+        timestamp = time.time() - start_time
+        curr_torque = axis.controller.effective_torque_setpoint
+        curr_position = axis.pos_estimate
+        emg_effort_val = emg_avg_value - relaxed_emg_avg_value
+
+        # USER IS WINNING
+        if ((abs(curr_position) <= abs(last_position) and emg_effort_val < emg_effort_threshold) 
+            or (abs(curr_position) < abs(start_relaxing_position_thresh))):
+
+            num_machine_failures += 1
+            num_user_failures = 0
+
+            desired_torque = curr_torque + torque_step
+            if (abs(desired_torque) >= abs(max_torque)): desired_torque = max_torque
+
+            print(f"user winning!", end='  ')
+       
+        # USER IS LOSING
+        else:
+            num_user_failures += 1
+            num_machine_failures = 0
+
+            if emg_effort_val > emg_effort_threshold:
+                desired_torque = curr_torque - emg_effort_val*torque_step if (abs(curr_torque - emg_effort_val*torque_step) < abs(curr_torque)) else 0
+                if (abs(desired_torque) >= abs(max_torque)): desired_torque = max_torque
+
+                print("user losing !", end='  ')
+                num_user_failures = 0
+            else:
+                if (abs(desired_torque) >= abs(max_torque)): desired_torque = max_torque
+                print("user losing!!", end='  ')
+
+        ######################################################################## Max torque correction
+        if (abs(curr_torque) >= abs(max_torque)):
+            num_max_torque_times += 1
+            print(f"!!!!!! AT MAX TORQUE: TIME {num_max_torque_times}")
+            if (num_max_torque_times >= max_max_torque_times_before_user_win): break #User has won!
+        else:
+            num_max_torque_times = 0
+        ######################################################################## Write torque, update position
+        print(f"desired torque: {desired_torque:.3f} Nm  ||  curr position: {curr_position:.3f}")
+        set_torque(odrv0=odrv0, axis=axis, target_torque=desired_torque)
+        last_position = curr_position
+
+        ######################################################################## Plotting
+
+        # Log torque data
+        torque_log.append(abs(curr_torque))
+        time_log.append(timestamp)
+        
+        # Get EMG data from queue
+        num_emg_data = 0
+        emg_avg_value = 0
+        emg_avg_time = 0
+        while not emg_queue.empty():
+            num_emg_data += 1
+            emg_t, emg_val = emg_queue.get()
+
+            # Add to overall emg lists
+            emg_data.append(emg_val)
+            emg_timestamps.append(emg_t)
+
+            # Calculating average
+            emg_avg_time += emg_t
+            emg_avg_value += emg_val
+
+        if (num_emg_data != 0):
+            emg_avg_time /= num_emg_data
+            emg_avg_value /= num_emg_data
+            emg_avg_val_times.append(emg_avg_time)
+            emg_avg_val_voltages.append(emg_avg_value)
+
+        if (relaxed_emg_avg_value == -1): relaxed_emg_avg_value = emg_avg_value
+
+        # Update live plots
+            # Torque plot
+        line_torque.set_xdata(time_log)
+        line_torque.set_ydata(torque_log)
+            # EMG plot
+        line_raw.set_xdata(emg_timestamps)
+        line_raw.set_ydata(emg_data)
+        line_avg.set_xdata(emg_avg_val_times)
+        line_avg.set_ydata(emg_avg_val_voltages)
+
+        ax_torque.relim()
+        ax_torque.autoscale_view()
+        ax_emg.relim()
+        ax_emg.autoscale_view()
+        plt.pause(0.01)
+
+    # Game end condition
+
+    if (num_max_torque_times >= max_max_torque_times_before_user_win):
+        print("User has won.")
+        user_win = True
+    else:
+        print("Machine has won.")
+
+    # Final stats
+    total_time = time.time() - start_time
+    avg_torque = sum(torque_log) / len(torque_log) if torque_log else 0
+    plt.ioff()
+    plt.close(fig)
+
+    # Reset position
+    time.sleep(1)
+    set_torque(odrv0=odrv0, axis=axis, target_torque=0)
+    set_position(target_position=start_position, axis=axis)
+
+    # Save CSV
+    df = pd.DataFrame({'time_sec': time_log, 'torque_Nm': torque_log})
+    filename = f"logs/torque_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    # df.to_csv(filename, index=False)
+    # print(f"Saved torque log to {filename}")
+
+    # Add subtitle with stats
+    subtitle = f"Average Torque: {avg_torque:.2f} Nm | Total Time: {total_time:.2f} s | Mode: EMG-depedent"
+    ax_torque.set_title('Torque vs Time\n' + subtitle)
+
+    # Save the figure
+    plot_filename = filename.replace(".csv", ".png")
+    fig.savefig(plot_filename)
+    print(f"Saved torque plot to {plot_filename}")
+
+    return {
+        "total_time_sec": total_time,
+        "average_torque_Nm": avg_torque,
+        "csv_file": filename,
+        "plot_file": plot_filename
+    }
+
 
 def constant_torque_mode(odrv0, begin_fight_pos, torque_setpoint = -1):
     '''
@@ -406,22 +610,22 @@ try:
     clear_errors(odrv0)
     axis = odrv0.axis0
 
-    fight_user(odrv0)
+    fight_user_emg_based(odrv0)
     # constant_torque_mode(odrv0, begin_fight_pos=max_position, torque_setpoint= -0.35)
 
     odrv0.axis0.requested_state = AxisState.IDLE
 
 except KeyboardInterrupt:
     print("Stopping motor...")
-    set_position(target_position=start_position, axis=axis)
     set_torque(odrv0=odrv0, axis=axis, target_torque=0)
+    set_position(target_position=start_position, axis=axis)
     odrv0.axis0.requested_state = AxisState.IDLE    
 except Exception as e:
     print(f"An error occurred: {e}")
     print("Stopping motor...")
     clear_errors(odrv0)
-    set_position(target_position=start_position, axis=axis)
     set_torque(odrv0=odrv0, axis=axis, target_torque=0)
+    set_position(target_position=start_position, axis=axis)
     odrv0.axis0.requested_state = AxisState.IDLE
 
 
