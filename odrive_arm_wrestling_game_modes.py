@@ -187,7 +187,6 @@ def fight_user(odrv0):
     curr_torque = axis.controller.effective_torque_setpoint
     curr_current = odrv0.ibus
     curr_position = axis.pos_estimate
-    print(f"START: current on DC bus: {curr_current:.3f} A  ||   effective torque: {curr_torque:.3f} Nm  ||   current position: {curr_position:.3f}")
     time.sleep(0.5)
 
     desired_torque = curr_torque
@@ -227,8 +226,9 @@ def fight_user(odrv0):
 
 
     # Start with the arm up
-    set_position(target_position=start_position, axis=axis)
     set_torque(odrv0=odrv0, axis=axis, target_torque=0)
+    set_position(target_position=start_position, axis=axis)
+    print(f"START: current on DC bus: {curr_current:.3f} A  ||   effective torque: {curr_torque:.3f} Nm  ||   current position: {curr_position:.3f}")
 
     # Fight user logic
     while (abs(max_position) - abs(curr_position) > winning_thresh):
@@ -351,7 +351,7 @@ def fight_user_emg_based(odrv0):
     '''
     # Intialize threshold
     start_relaxing_position_thresh = -0.75
-    user_win = False
+    emg_effort_threshold = 0.2   # CONSTANT: when emg_avg_value > threshold + relaxed_emg_value, ease up
 
     # Initialize variables
     axis = odrv0.axis0
@@ -368,7 +368,6 @@ def fight_user_emg_based(odrv0):
     num_max_torque_times = 0
 
     # NEW: Emg average variables
-    emg_effort_threshold = 0.2   # CONSTANT: when emg_avg_value > threshold + relaxed_emg_value, ease up
     emg_avg_val_voltages = []
     emg_avg_val_times = []
     relaxed_emg_avg_value = -1
@@ -407,8 +406,8 @@ def fight_user_emg_based(odrv0):
 
 
     # Start with the arm up
-    set_position(target_position=start_position, axis=axis)
     set_torque(odrv0=odrv0, axis=axis, target_torque=0)
+    set_position(target_position=start_position, axis=axis)
 
     # Fight user logic
     while (abs(max_position) - abs(curr_position) > winning_thresh):
@@ -416,9 +415,11 @@ def fight_user_emg_based(odrv0):
         curr_torque = axis.controller.effective_torque_setpoint
         curr_position = axis.pos_estimate
         emg_effort_val = emg_avg_value - relaxed_emg_avg_value
+        # print(f"EMG: effort = {emg_effort_val} = {emg_avg_value} - {relaxed_emg_avg_value}")
 
         # USER IS WINNING
-        if ((abs(curr_position) <= abs(last_position) and emg_effort_val < emg_effort_threshold) 
+        if ((abs(curr_position) == abs(last_position) and emg_effort_val < emg_effort_threshold) 
+            or (abs(curr_position) < abs(last_position))
             or (abs(curr_position) < abs(start_relaxing_position_thresh))):
 
             num_machine_failures += 1
@@ -484,7 +485,7 @@ def fight_user_emg_based(odrv0):
             emg_avg_val_times.append(emg_avg_time)
             emg_avg_val_voltages.append(emg_avg_value)
 
-        if (relaxed_emg_avg_value == -1): relaxed_emg_avg_value = emg_avg_value
+            if (relaxed_emg_avg_value == -1): relaxed_emg_avg_value = emg_avg_value
 
         # Update live plots
             # Torque plot
