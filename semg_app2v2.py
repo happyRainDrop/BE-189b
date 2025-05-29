@@ -15,7 +15,7 @@ from odrive.utils import dump_errors, request_state
 import pandas as pd
 from datetime import datetime
 
-# ---- Constants ----
+# ---- Constants for streaming emg data----
 BAUD_RATE = 115200
 PLOT_WINDOW_SECONDS = 10
 STREAM_CMD = bytes([3])
@@ -27,7 +27,7 @@ FS = 100  # EMG sampling rate must be >= 900–1000 Hz for 450 Hz upper cutoff
 BUFFER_SIZE = 3 * FS  # 3 seconds of data
 
 
-FILTER_ORDER = 4
+FILTER_ORDER = 4  #Butterworth filter stuff
 
 emg_data = []
 emg_timestamps = []
@@ -50,6 +50,7 @@ winning_thresh = 0.1      # within here of the max position, consider the machin
 max_user_failures_before_easing_up = 2
 max_max_torque_times_before_user_win = 15
 
+# finds arduino port
 def find_arduino():
     arduino_vids = ["2341", "1A86", "10C4", "2A03"]
     ports = serial.tools.list_ports.comports()
@@ -58,6 +59,7 @@ def find_arduino():
             return port.device
     return None
 
+# reads in emg voltage data from arduino
 def read_serial_data(port):
     global start_time
     try:
@@ -90,7 +92,7 @@ def butter_lowpass(cutoff, fs, order=4):
     normal_cutoff = cutoff / nyq
     return butter(order, normal_cutoff, btype='low', analog=False)
 
-
+#applies butterworth filter
 def apply_filter(data, b, a):
     return lfilter(b, a, data)
 
@@ -340,83 +342,82 @@ def fight_user(odrv0):
         ######################################################################## Plotting
 
         # Log torque data
-        torque_log.append((curr_torque))
+        torque_log.append(abs(curr_torque))
         time_log.append(timestamp)
-
+        print(timestamp)
 
 
         # Get EMG data from queue
-        while True:
-            try:
-                while not data_queue.empty():
-                    t, v = data_queue.get()
-                    x_vals.append(t)
-                    y_vals.append(v)
-                    raw_buffer.append(v)
+        try:
+            while not data_queue.empty():
+                t, v = data_queue.get()
+                x_vals.append(t)
+                y_vals.append(v)
+                raw_buffer.append(v)
 
-                # Trim data to plot window
-                while x_vals and x_vals[-1] - x_vals[0] > PLOT_WINDOW_SECONDS:
-                    x_vals.pop(0)
-                    y_vals.pop(0)
+            # Trim data to plot window
+            while x_vals and x_vals[-1] - x_vals[0] > PLOT_WINDOW_SECONDS:
+                x_vals.pop(0)
+                y_vals.pop(0)
 
-                if plot_filtered[0]:
-                    if len(raw_buffer) >= FILTER_ORDER:
-                        filtered = apply_filter(list(raw_buffer), b, a)
-                        filt_y = filtered[-len(y_vals):]
-                        # --- Compute FFT ---
-                        if len(filt_y) >= FS:  # At least 1 second of data
-                            windowed = np.array(filt_y[-FS:]) * np.hanning(FS)
-                            fft_vals = np.abs(np.fft.rfft(windowed))
-                            fft_freqs = np.fft.rfftfreq(FS, d=1.0/FS)
+            if plot_filtered[0]:
+                if len(raw_buffer) >= FILTER_ORDER:
+                    filtered = apply_filter(list(raw_buffer), b, a)
+                    filt_y = filtered[-len(y_vals):]
+                    # --- Compute FFT ---
+                    if len(filt_y) >= FS:  # At least 1 second of data
+                        windowed = np.array(filt_y[-FS:]) * np.hanning(FS)
+                        fft_vals = np.abs(np.fft.rfft(windowed))
+                        fft_freqs = np.fft.rfftfreq(FS, d=1.0/FS)
 
-                            fft_line.set_xdata(fft_freqs)
-                            fft_line.set_ydata(fft_vals)
+                        fft_line.set_xdata(fft_freqs)
+                        fft_line.set_ydata(fft_vals)
 
-                        filt_x = x_vals[-len(filt_y):]
+                    filt_x = x_vals[-len(filt_y):]
 
-                        # Peak detection
-                        peaks, props = find_peaks(filt_y, height=200, distance=10, width=5)
+                    # Peak detection
+                    peaks, props = find_peaks(filt_y, height=200, distance=10, width=5)
 
-                        total_peaks[0] += len(peaks)
+                    total_peaks[0] += len(peaks)
 
-                        if len(peaks) > 0:
-                            max_peak_amp[0] = max(max_peak_amp[0], max(props['peak_heights']))
-                            peak_width_ms = max(props['widths']) * (1000 / FS)
-                            max_peak_width[0] = max(max_peak_width[0], peak_width_ms)
+                    if len(peaks) > 0:
+                        max_peak_amp[0] = max(max_peak_amp[0], max(props['peak_heights']))
+                        peak_width_ms = max(props['widths']) * (1000 / FS)
+                        max_peak_width[0] = max(max_peak_width[0], peak_width_ms)
 
-                        # Plot filtered + peaks
-                        raw_line.set_xdata([])
-                        raw_line.set_ydata([])
-                        filt_line.set_xdata(filt_x)
-                        filt_line.set_ydata(filt_y)
-                        peak_line.set_xdata(np.array(filt_x)[peaks])
-                        peak_line.set_ydata(np.array(filt_y)[peaks])
+                    # Plot filtered + peaks
+                    raw_line.set_xdata([])
+                    raw_line.set_ydata([])
+                    filt_line.set_xdata(filt_x)
+                    filt_line.set_ydata(filt_y)
+                    peak_line.set_xdata(np.array(filt_x)[peaks])
+                    peak_line.set_ydata(np.array(filt_y)[peaks])
 
-                        # Update text
-                        info_text.set_text(f"Peaks Detected: {total_peaks[0]}\n"
-                                        f"Max Peak Amplitude: {max_peak_amp[0]:.2f}\n"
-                                        f"Max Peak Width: {max_peak_width[0]:.2f} ms")
-                else:
-                    filt_line.set_xdata([])
-                    filt_line.set_ydata([])
-                    peak_line.set_xdata([])
-                    peak_line.set_ydata([])
-                    raw_line.set_xdata(x_vals)
-                    raw_line.set_ydata(y_vals)
-                    fft_line.set_xdata([])
-                    fft_line.set_ydata([])
+                    # Update text
+                    info_text.set_text(f"Peaks Detected: {total_peaks[0]}\n"
+                                    f"Max Peak Amplitude: {max_peak_amp[0]:.2f}\n"
+                                    f"Max Peak Width: {max_peak_width[0]:.2f} ms")
+            else:
+                filt_line.set_xdata([])
+                filt_line.set_ydata([])
+                peak_line.set_xdata([])
+                peak_line.set_ydata([])
+                raw_line.set_xdata(x_vals)
+                raw_line.set_ydata(y_vals)
+                fft_line.set_xdata([])
+                fft_line.set_ydata([])
 
 
-                ax_time.relim()
-                ax_time.autoscale_view()
-                ax_freq.relim()
-                ax_freq.autoscale_view()
+            ax_time.relim()
+            ax_time.autoscale_view()
+            ax_freq.relim()
+            ax_freq.autoscale_view()
 
-                plt.pause(0.01)
+            plt.pause(0.01)
 
-            except KeyboardInterrupt:
-                print("[INFO] Plotting stopped.")
-                break
+        except KeyboardInterrupt:
+            print("[INFO] Plotting stopped.")
+            break
         if len(time_log) >= 2:
             line_torque.set_xdata(time_log)
             line_torque.set_ydata(torque_log)
@@ -477,7 +478,7 @@ def fight_user_emg_based(odrv0):
     '''
     # Intialize threshold
     start_relaxing_position_thresh = -0.75
-    emg_effort_threshold = 0.2   # CONSTANT: when emg_avg_value > threshold + relaxed_emg_value, ease up
+    emg_effort_threshold = 0.6   # CONSTANT: when emg_avg_value > threshold + relaxed_emg_value, ease up
 
     # Initialize variables
     axis = odrv0.axis0
@@ -609,6 +610,7 @@ def fight_user_emg_based(odrv0):
             if emg_effort_val > emg_effort_threshold:
                 desired_torque = curr_torque - emg_effort_val*torque_step if (abs(curr_torque - emg_effort_val*torque_step) < abs(curr_torque)) else 0
                 if (abs(desired_torque) >= abs(max_torque)): desired_torque = max_torque
+                if (desired_torque > 0): desired_torque = 0
 
                 print("user losing !", end='  ')
                 num_user_failures = 0
@@ -631,9 +633,9 @@ def fight_user_emg_based(odrv0):
         ######################################################################## Plotting
 
         # Log torque data
-        torque_log.append((curr_torque))
+        torque_log.append(abs(curr_torque))
         time_log.append(timestamp)
-
+        print(timestamp)
 
 
 
@@ -641,97 +643,96 @@ def fight_user_emg_based(odrv0):
         num_emg_data = 0
         emg_avg_value = 0
         emg_avg_time = 0
-        while True:
-            try:
-                while not data_queue.empty():
-                    
-                    t, v = data_queue.get()
-                    x_vals.append(t)
-                    y_vals.append(v)
-                    raw_buffer.append(v)
+        try:
+            while not data_queue.empty():
+                
+                t, v = data_queue.get()
+                x_vals.append(t)
+                y_vals.append(v)
+                raw_buffer.append(v)
 
-                    num_emg_data += 1
-                    emg_t, emg_val = t, v
+                num_emg_data += 1
+                emg_t, emg_val = t, v
 
-                    # Add to overall emg lists
-                    emg_data.append(emg_val)
-                    emg_timestamps.append(emg_t)
+                # Add to overall emg lists
+                emg_data.append(emg_val)
+                emg_timestamps.append(emg_t)
 
-                    # Calculating average
-                    emg_avg_time += emg_t
-                    emg_avg_value += emg_val
+                # Calculating average
+                emg_avg_time += emg_t
+                emg_avg_value += emg_val
 
-                if (num_emg_data != 0):
-                    emg_avg_time /= num_emg_data
-                    emg_avg_value /= num_emg_data
-                    emg_avg_val_times.append(emg_avg_time)
-                    emg_avg_val_voltages.append(emg_avg_value)
+            if (num_emg_data != 0):
+                emg_avg_time /= num_emg_data
+                emg_avg_value /= num_emg_data
+                emg_avg_val_times.append(emg_avg_time)
+                emg_avg_val_voltages.append(emg_avg_value)
 
-                    if (relaxed_emg_avg_value == -1): relaxed_emg_avg_value = emg_avg_value                    
+                if (relaxed_emg_avg_value == -1): relaxed_emg_avg_value = emg_avg_value                    
 
-                # Trim data to plot window
-                while x_vals and x_vals[-1] - x_vals[0] > PLOT_WINDOW_SECONDS:
-                    x_vals.pop(0)
-                    y_vals.pop(0)
+            # Trim data to plot window
+            while x_vals and x_vals[-1] - x_vals[0] > PLOT_WINDOW_SECONDS:
+                x_vals.pop(0)
+                y_vals.pop(0)
 
-                if plot_filtered[0]:
-                    if len(raw_buffer) >= FILTER_ORDER:
-                        filtered = apply_filter(list(raw_buffer), b, a)
-                        filt_y = filtered[-len(y_vals):]
-                        # --- Compute FFT ---
-                        if len(filt_y) >= FS:  # At least 1 second of data
-                            windowed = np.array(filt_y[-FS:]) * np.hanning(FS)
-                            fft_vals = np.abs(np.fft.rfft(windowed))
-                            fft_freqs = np.fft.rfftfreq(FS, d=1.0/FS)
+            if plot_filtered[0]:
+                if len(raw_buffer) >= FILTER_ORDER:
+                    filtered = apply_filter(list(raw_buffer), b, a)
+                    filt_y = filtered[-len(y_vals):]
+                    # --- Compute FFT ---
+                    if len(filt_y) >= FS:  # At least 1 second of data
+                        windowed = np.array(filt_y[-FS:]) * np.hanning(FS)
+                        fft_vals = np.abs(np.fft.rfft(windowed))
+                        fft_freqs = np.fft.rfftfreq(FS, d=1.0/FS)
 
-                            fft_line.set_xdata(fft_freqs)
-                            fft_line.set_ydata(fft_vals)
+                        fft_line.set_xdata(fft_freqs)
+                        fft_line.set_ydata(fft_vals)
 
-                        filt_x = x_vals[-len(filt_y):]
+                    filt_x = x_vals[-len(filt_y):]
 
-                        # Peak detection
-                        peaks, props = find_peaks(filt_y, height=200, distance=10, width=5)
+                    # Peak detection
+                    peaks, props = find_peaks(filt_y, height=200, distance=10, width=5)
 
-                        total_peaks[0] += len(peaks)
+                    total_peaks[0] += len(peaks)
 
-                        if len(peaks) > 0:
-                            max_peak_amp[0] = max(max_peak_amp[0], max(props['peak_heights']))
-                            peak_width_ms = max(props['widths']) * (1000 / FS)
-                            max_peak_width[0] = max(max_peak_width[0], peak_width_ms)
+                    if len(peaks) > 0:
+                        max_peak_amp[0] = max(max_peak_amp[0], max(props['peak_heights']))
+                        peak_width_ms = max(props['widths']) * (1000 / FS)
+                        max_peak_width[0] = max(max_peak_width[0], peak_width_ms)
 
-                        # Plot filtered + peaks
-                        raw_line.set_xdata([])
-                        raw_line.set_ydata([])
-                        filt_line.set_xdata(filt_x)
-                        filt_line.set_ydata(filt_y)
-                        peak_line.set_xdata(np.array(filt_x)[peaks])
-                        peak_line.set_ydata(np.array(filt_y)[peaks])
+                    # Plot filtered + peaks
+                    raw_line.set_xdata([])
+                    raw_line.set_ydata([])
+                    filt_line.set_xdata(filt_x)
+                    filt_line.set_ydata(filt_y)
+                    peak_line.set_xdata(np.array(filt_x)[peaks])
+                    peak_line.set_ydata(np.array(filt_y)[peaks])
 
-                        # Update text
-                        info_text.set_text(f"Peaks Detected: {total_peaks[0]}\n"
-                                        f"Max Peak Amplitude: {max_peak_amp[0]:.2f}\n"
-                                        f"Max Peak Width: {max_peak_width[0]:.2f} ms")
-                else:
-                    filt_line.set_xdata([])
-                    filt_line.set_ydata([])
-                    peak_line.set_xdata([])
-                    peak_line.set_ydata([])
-                    raw_line.set_xdata(x_vals)
-                    raw_line.set_ydata(y_vals)
-                    fft_line.set_xdata([])
-                    fft_line.set_ydata([])
+                    # Update text
+                    info_text.set_text(f"Peaks Detected: {total_peaks[0]}\n"
+                                    f"Max Peak Amplitude: {max_peak_amp[0]:.2f}\n"
+                                    f"Max Peak Width: {max_peak_width[0]:.2f} ms")
+            else:
+                filt_line.set_xdata([])
+                filt_line.set_ydata([])
+                peak_line.set_xdata([])
+                peak_line.set_ydata([])
+                raw_line.set_xdata(x_vals)
+                raw_line.set_ydata(y_vals)
+                fft_line.set_xdata([])
+                fft_line.set_ydata([])
 
 
-                ax_time.relim()
-                ax_time.autoscale_view()
-                ax_freq.relim()
-                ax_freq.autoscale_view()
+            ax_time.relim()
+            ax_time.autoscale_view()
+            ax_freq.relim()
+            ax_freq.autoscale_view()
 
-                plt.pause(0.01)
+            plt.pause(0.01)
 
-            except KeyboardInterrupt:
-                print("[INFO] Plotting stopped.")
-                break
+        except KeyboardInterrupt:
+            print("[INFO] Plotting stopped.")
+            break
         if len(time_log) >= 2:
             line_torque.set_xdata(time_log)
             line_torque.set_ydata(torque_log)
@@ -758,8 +759,8 @@ def fight_user_emg_based(odrv0):
     set_position(target_position=start_position, axis=axis)
 
     # Save CSV
-    df = pd.DataFrame({'time_sec': time_log, 'torque_Nm': torque_log})
-    filename = f"logs/torque_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    #df = pd.DataFrame({'time_sec': time_log, 'torque_Nm': torque_log})
+    #filename = f"logs/torque_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     # df.to_csv(filename, index=False)
     # print(f"Saved torque log to {filename}")
 
@@ -775,8 +776,8 @@ def fight_user_emg_based(odrv0):
     return {
         "total_time_sec": total_time,
         "average_torque_Nm": avg_torque,
-        "csv_file": filename,
-        "plot_file": plot_filename
+        #"csv_file": filename,
+        #"plot_file": plot_filename
     }
 
 def constant_torque_mode(odrv0, begin_fight_pos, torque_setpoint = -1):
