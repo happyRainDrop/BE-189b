@@ -10,6 +10,8 @@ import numpy as np
 from odrive.enums import AxisState
 import pandas as pd
 from datetime import datetime
+from matplotlib.widgets import Slider
+
 
 from utility import *
 
@@ -108,6 +110,10 @@ def fight_user_emg_based(odrv0):
     total_peaks = [0]
     max_peak_amp = [0]
     max_peak_width = [0]  # In milliseconds
+
+    peak_thresh_ax = plt.axes([0.1, 0.25, 0.3, 0.03])  # x, y, width, height
+    peak_thresh_slider = Slider(peak_thresh_ax, 'Peak Height', valmin=0, valmax=1000, valinit=200)
+
 
     # plot setup
     plt.ion()
@@ -316,7 +322,9 @@ def fight_user_emg_based(odrv0):
                     filt_x = x_vals[-len(filt_y):]
 
                     # peak detection
-                    peaks, props = find_peaks(filt_y, height=200, distance=10, width=5)
+                    peak_thresh = peak_thresh_slider.val
+                    peaks, props = find_peaks(filt_y, height=peak_thresh, distance=10, width=5)
+
 
                     # increment the total peaks count
                     total_peaks[0] += len(peaks)
@@ -339,7 +347,8 @@ def fight_user_emg_based(odrv0):
                     # Update text
                     info_text.set_text(f"Peaks Detected: {total_peaks[0]}\n"
                                     f"Max Peak Amplitude: {max_peak_amp[0]:.2f}\n"
-                                    f"Max Peak Width: {max_peak_width[0]:.2f} ms")
+                                    f"Max Peak Width: {max_peak_width[0]:.2f} ms"
+                                    f"Peak Threshold: {peak_thresh:.1f}")
                     
             # else add the unfiltered data to the corresponding plot
             else:
