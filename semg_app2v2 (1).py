@@ -36,6 +36,9 @@ def fight_user_emg_based(odrv0):
     # Butterworth filter order
     FILTER_ORDER = 4  
 
+    emg_window = deque(maxlen=FS * 2)  # 2-second moving average buffer (FS = 100 Hz → 200 samples)
+
+
     # initialize EMG data lists
     emg_data = []
     emg_timestamps = []
@@ -278,22 +281,28 @@ def fight_user_emg_based(odrv0):
                 num_emg_data += 1
                 emg_t, emg_val = t, v
 
-                # Add to overall emg lists
-                emg_data.append(emg_val)
-                emg_timestamps.append(emg_t)
+                emg_data.append(emg_val)              # Keep cumulative full trace
+                emg_timestamps.append(emg_t)          # Keep time data
+                emg_window.append(emg_val)            # Append to moving average buffer
 
-                # Calculating average
-                emg_avg_time += emg_t
-                emg_avg_value += emg_val
 
             # TODO check that this does what you want it to, previous code looked weird
             # calculate and append the average time and voltage data
-            emg_avg_val_times.append(sum(emg_timestamps)/len(emg_timestamps))
-            emg_avg_val_voltages.append(sum(emg_data)/len(emg_data))
+            # Append average of moving window for plotting/logging if needed
+            if emg_window:
+                emg_avg_value = sum(emg_window) / len(emg_window)
+            else:
+                emg_avg_value = 0
+
+            emg_avg_val_voltages.append(emg_avg_value)
+            emg_avg_val_times.append(emg_t)  # Or average time if you prefer
+
 
             # assume the first emg datapoint is relaxed, user should be relaxed when starting the game
             if num_emg_data:
-                if (relaxed_emg_avg_value == -1): relaxed_emg_avg_value = emg_avg_value                    
+                if relaxed_emg_avg_value == -1 and len(emg_window) >= FS:
+                    relaxed_emg_avg_value = sum(emg_window) / len(emg_window)
+                                
 
             # Trim data to plot window
             while x_vals and x_vals[-1] - x_vals[0] > PLOT_WINDOW_SECONDS:
