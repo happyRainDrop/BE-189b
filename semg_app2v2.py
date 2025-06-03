@@ -266,8 +266,10 @@ def fight_user_emg_based(odrv0):
 
             # TODO check that this does what you want it to, previous code looked weird
             # calculate and append the average time and voltage data
-            emg_avg_val_times.append(sum(emg_timestamps)/len(emg_timestamps))
-            emg_avg_val_voltages.append(sum(emg_data)/len(emg_data))
+            if emg_timestamps:
+                emg_avg_val_times.append(sum(emg_timestamps)/len(emg_timestamps))
+            if emg_data:
+                emg_avg_val_voltages.append(sum(emg_data)/len(emg_data))
 
             # assume the first emg datapoint is relaxed, user should be relaxed when starting the game
             if num_emg_data:
