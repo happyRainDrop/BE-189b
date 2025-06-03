@@ -285,17 +285,17 @@ def fight_user_emg_based(odrv0):
                 emg_timestamps.append(emg_t)          # Keep time data
                 emg_window.append(emg_val)            # Append to moving average buffer
 
-
-            # TODO check that this does what you want it to, previous code looked weird
-            # calculate and append the average time and voltage data
             # Append average of moving window for plotting/logging if needed
             if emg_window:
                 emg_avg_value = sum(emg_window) / len(emg_window)
             else:
                 emg_avg_value = 0
 
-            emg_avg_val_voltages.append(emg_avg_value)
-            emg_avg_val_times.append(emg_t)  # Or average time if you prefer
+            # calculate and append the average time and voltage data if not empty
+            if emg_timestamps:
+                emg_avg_val_times.append(sum(emg_timestamps)/len(emg_timestamps))
+            if emg_data:
+                emg_avg_val_voltages.append(sum(emg_data)/len(emg_data))
 
 
             # assume the first emg datapoint is relaxed, user should be relaxed when starting the game

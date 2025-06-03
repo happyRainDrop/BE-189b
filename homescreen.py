@@ -1,7 +1,7 @@
 import pygame
 import sys
 from flappy import start_flappy_bird
-from semg_app2v2 import fight_machine
+from semg_app2v3 import fight_machine
 from voicecontrolled import start_voice_control
 
 # initialize pygame
