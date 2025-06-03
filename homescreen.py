@@ -1,7 +1,7 @@
 import pygame
 import sys
 from flappy import start_flappy_bird
-from semg_app2v3 import fight_machine
+from semg_app2v30 import fight_machine
 from voicecontrolled import start_voice_control
 
 # initialize pygame
@@ -11,7 +11,7 @@ pygame.display.set_caption("My Game")
 font = pygame.font.SysFont(None, 48)
 
 # list of game modes, by default select the first one
-options = ["Flappy Bird", "vs Machine (EMG based)", "Constant Torque (Voice Controlled)"]
+options = ["Flappy Bird (Arm Position)", "vs Machine (EMG based)", "Constant Torque (Voice Controlled)"]
 selected = 0
 
 # Function to draw the home screen with options
@@ -62,8 +62,8 @@ while True:
     mode = handle_input()
     if mode:
         print(f"Starting {mode}...")
-        # start Flappy Bird game
-        if mode == "Flappy Bird":
+        # start Flappy Bird game 
+        if mode == "Flappy Bird (Arm Position)":
             start_flappy_bird()
             # reset screen size when game ends
             screen = pygame.display.set_mode((800, 600))
@@ -77,7 +77,4 @@ while True:
     # redraw the home screen after handling input
     draw_home_screen()
 
-    # input torque doesn't take .
-    # torque displays as negative
-    # add quit voice command
     # flappy bird setup (let the arm fall)

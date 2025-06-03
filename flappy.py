@@ -1,6 +1,7 @@
 import pygame, random, time, odrive
 from pygame.locals import *
 from odrive.enums import *
+from utility import set_torque
 
 # Parameters
 
@@ -187,16 +188,11 @@ def start_flappy_bird():
                 pygame.quit()
             # if the user presses a key, start the game
             if event.type == KEYDOWN:
-                constant_current = -0.5  # Amps
-                odrv0.axis0.controller.input_torque = constant_current
-                print(f'applying {constant_current} A current')
-                if event.key == K_SPACE or event.key == K_UP:
-                    starting_pos = odrv0.axis0.pos_estimate
-                    bird.rect[1] = max(bird.rect[1] - 5, TOP_BUFFER)
-                    begin = False
-                elif event.key == K_DOWN:
-                    bird.rect[1] = min(bird.rect[1] + 5, SCREEN_HEIGHT - GROUND_HEIGHT - BOTTOM_BUFFER)
-                    begin = False
+                # to initialize, pull the arm down and reference the starting position as ground level
+                set_torque(odrv0, 0.3)
+                time.sleep(3)
+                starting_pos = odrv0.axis0.pos_estimate
+                begin = False
 
         # draw the background and the begin image
         screen.blit(BACKGROUND, (0, 0))
@@ -230,7 +226,7 @@ def start_flappy_bird():
                 pygame.quit()
         
         # calculate the bird height based on the motor position
-        bird.rect[1] = int((TOP_BUFFER - SCREEN_HEIGHT + GROUND_HEIGHT + BOTTOM_BUFFER)*((odrv0.axis0.pos_estimate - starting_pos)/3.8 - 1))
+        bird.rect[1] = int((TOP_BUFFER - SCREEN_HEIGHT + GROUND_HEIGHT + BOTTOM_BUFFER)*((- odrv0.axis0.pos_estimate + starting_pos)/3.8 - 1))
 
         # draw the background
         screen.blit(BACKGROUND, (0, 0))
@@ -270,5 +266,5 @@ def start_flappy_bird():
             # if a collision is detected, stop the motor and exit the game loop
             time.sleep(1)
             odrv0.axis0.controller.input_torque = 0
-            odrv0.axis0.requested_state = AxisState.Idle
+            odrv0.axis0.requested_state = AxisState.IDLE
             break

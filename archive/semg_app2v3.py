@@ -48,9 +48,6 @@ def fight_user_emg_based(odrv0):
     global data_queue
     data_queue = queue.Queue()
 
-    global running
-    running = True
-
     # Constants
     global start_position
     start_position = 0.0
@@ -92,7 +89,6 @@ def fight_user_emg_based(odrv0):
     relaxed_emg_avg_value = -1
     emg_avg_value = 0
     emg_effort_val = 0
-    prev_emg_avg = 0
 
     # Logging torque and EMG
     torque_log = []
@@ -118,25 +114,20 @@ def fight_user_emg_based(odrv0):
     max_peak_amp = [0]
     max_peak_width = [0]  # In milliseconds
 
-
+    peak_thresh_ax = plt.axes([0.1, 0.25, 0.3, 0.03])  # x, y, width, height
+    peak_thresh_slider = Slider(peak_thresh_ax, 'Peak Height', valmin=0, valmax=1000, valinit=200)
 
 
     # plot setup
     plt.ion()
     fig, (ax_time, ax_freq, ax_torque) = plt.subplots(3, 1, figsize=(10, 8))
-
-    plt.subplots_adjust(bottom=0.3, hspace=0.6)
-
-
-    peak_thresh_ax = plt.axes([0.1, 0.25, 0.3, 0.03])  # x, y, width, height
-    peak_thresh_slider = Slider(peak_thresh_ax, 'Peak Height', valmin=0, valmax=1000, valinit=200)
-
     # Reduce font size for all axis labels and titles to avoid overlap
     for ax in [ax_time, ax_freq, ax_torque]:
-        ax.title.set_fontsize(8)
-        ax.xaxis.label.set_fontsize(8)
-        ax.yaxis.label.set_fontsize(8)
+        ax.title.set_fontsize(10)
+        ax.xaxis.label.set_fontsize(9)
+        ax.yaxis.label.set_fontsize(9)
         ax.tick_params(axis='both', labelsize=8)
+    plt.subplots_adjust(bottom=0.3, hspace=0.4)
 
     # time-domain plot
     raw_line, = ax_time.plot([], [], label="Raw EMG")
@@ -192,13 +183,9 @@ def fight_user_emg_based(odrv0):
     btn_stop = Button(ax_stop, 'STOP MOTOR')
 
     def stop_motor(event):
-        global running
-        running = False
         print("[USER] Stop Motor pressed.")
-        set_torque(odrv0, 0)
+        set_torque(odrv0=odrv0, target_torque=0)
         axis.requested_state = AxisState.IDLE
-        # Close the figure so the main loop can exit cleanly
-        plt.close(fig)
 
     btn_stop.on_clicked(stop_motor)
 
@@ -208,8 +195,7 @@ def fight_user_emg_based(odrv0):
     print(f"START: current on DC bus: {curr_current:.3f} A  ||   effective torque: {curr_torque:.3f} Nm  ||   current position: {curr_position:.3f}")
 
     # while the game hasn't been won
-    while (abs(max_position) - abs(curr_position) > winning_thresh) and running:
-        prev_emg_avg = emg_avg_value
+    while (abs(max_position) - abs(curr_position) > winning_thresh):
         # get the current time, relative to the start time of the EMG thread
         timestamp = time.time() - function_start_time2
         # read the motor torque, motor position, calcualte EMG effort
@@ -283,7 +269,7 @@ def fight_user_emg_based(odrv0):
         emg_avg_time = 0
         try:
             while not data_queue.empty():
-                #print(list(data_queue.queue))
+                print(list(data_queue.queue))
                 # pop a datapoint from the queue
                 t, v = data_queue.get()
 
@@ -300,16 +286,22 @@ def fight_user_emg_based(odrv0):
                 emg_window.append(emg_val)            # Append to moving average buffer
 
             # Append average of moving window for plotting/logging if needed
-
             if emg_window:
                 emg_avg_value = sum(emg_window) / len(emg_window)
             else:
                 emg_avg_value = 0
 
-            relaxed_emg_avg_value = prev_emg_avg
+            # calculate and append the average time and voltage data if not empty
+            if emg_timestamps:
+                emg_avg_val_times.append(sum(emg_timestamps)/len(emg_timestamps))
+            if emg_data:
+                emg_avg_val_voltages.append(sum(emg_data)/len(emg_data))
 
 
-
+            # assume the first emg datapoint is relaxed, user should be relaxed when starting the game
+            if num_emg_data:
+                if relaxed_emg_avg_value == -1 and len(emg_window) >= FS:
+                    relaxed_emg_avg_value = sum(emg_window) / len(emg_window)
                                 
 
             # Trim data to plot window
@@ -446,10 +438,10 @@ def fight_machine():
         odrv0 = find_odrive()
 
         # Confirming config settings
-        odrv0.axis0.controller.config.vel_limit = 10.0    # Limiting the velocity (rad/s). LIMITS EFFECTIVE TORQUE SETPOINT
+        odrv0.axis0.controller.config.vel_limit = 20.0    # Limiting the velocity (rad/s). LIMITS EFFECTIVE TORQUE SETPOINT
         odrv0.axis0.controller.config.vel_gain = 0.5      # Lower vel_gain for smoother motion. LIMITS EFFECTIVE TORQUE SETPOINT
-        odrv0.axis0.config.motor.current_soft_max = 55    # The Flipsky can take up to 80A 
-        odrv0.axis0.config.motor.current_hard_max = 75    
+        odrv0.axis0.config.motor.current_soft_max = 80    # The Flipsky can take up to 80A 
+        odrv0.axis0.config.motor.current_hard_max = 80    
         odrv0.axis0.config.motor.current_control_bandwidth = 200
         
         # odrv0.axis0.pos_estimate = 0  # Uncomment to set the current position as 0

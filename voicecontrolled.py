@@ -18,17 +18,17 @@ recognizer = sr.Recognizer()
 # initialize microphone
 mic = sr.Microphone()
 
-# # Connect to ODrive
-# print("Searching for ODrive...")
-# odrv0 = odrive.find_sync()
-# print(f"ODrive found! Firmware Version: {odrv0.fw_version_major}.{odrv0.fw_version_minor}.{odrv0.fw_version_revision}")
+# Connect to ODrive
+print("Searching for ODrive...")
+odrv0 = odrive.find_sync()
+print(f"ODrive found! Firmware Version: {odrv0.fw_version_major}.{odrv0.fw_version_minor}.{odrv0.fw_version_revision}")
 
-# # Set up ODrive
-# print("Setting up axis...")
-# odrv0.clear_errors()
-# odrv0.axis0.requested_state = AxisState.CLOSED_LOOP_CONTROL
-# odrv0.axis0.controller.config.control_mode = ControlMode.TORQUE_CONTROL
-# odrv0.axis0.config.motor.current_soft_max = 10  # Amps
+# Set up ODrive
+print("Setting up axis...")
+odrv0.clear_errors()
+odrv0.axis0.requested_state = AxisState.CLOSED_LOOP_CONTROL
+odrv0.axis0.controller.config.control_mode = ControlMode.TORQUE_CONTROL
+odrv0.axis0.config.motor.current_soft_max = 10  # Amps
 
 # get the similarity between two words
 def similarity(a, b):
@@ -77,8 +77,8 @@ def listen_for_commands():
                     listening = False
                     running = False
 
-                # # update the torque based on the voice command
-                # set_torque(odrv0, torque)
+                # update the torque based on the voice command
+                set_torque(odrv0, torque)
 
         # handle errors
         except sr.WaitTimeoutError:
@@ -131,7 +131,7 @@ def start_voice_control():
                         # torque is negative due to the way we wind the motor
                         torque = -float(input_text)
                         input_mode = False
-                        # set_torque(odrv0, torque)
+                        set_torque(odrv0, torque)
                         start_listening()
 
                     # if failed, clear it
@@ -147,16 +147,20 @@ def start_voice_control():
                     input_text += event.unicode
 
         # update torque
-        # set_torque(odrv0, torque)
+        set_torque(odrv0, torque)
 
         # render torque text
         if input_mode:
-            label = font.render("Enter a number: " + input_text, True, (235, 128, 52))
+            label = font.render("Enter Torque: " + input_text, True, (235, 128, 52))
         else:
             label = font.render("Torque: " + str(-round(torque, 1)), True, (235, 128, 52))
 
-        # draw the game screen 
+        # draw the game screen and voice command menu
         screen.blit(label, (50, 150))
+        screen.blit(font.render("Voice Commands:", True, (235, 128, 52)), (50, 250))
+        screen.blit(font.render("Stronger (+0.1)", True, (235, 128, 52)), (50, 300))
+        screen.blit(font.render("Relax (-0.1)", True, (235, 128, 52)), (50, 350))
+        screen.blit(font.render("Exit", True, (235, 128, 52)), (50, 400))
         pygame.display.flip()
 
         # clock the game at 1 Hz
@@ -164,5 +168,5 @@ def start_voice_control():
 
     # On quit, stop the motor and set to idle state
     print("Stopping motor...")
-    # odrv0.axis0.controller.input_torque = 0
-    # odrv0.axis0.requested_state = AxisState.IDLE
+    set_torque(odrv0, 0)
+    odrv0.axis0.requested_state = AxisState.IDLE
