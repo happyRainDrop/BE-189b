@@ -18,38 +18,41 @@ recognizer = sr.Recognizer()
 # initialize microphone
 mic = sr.Microphone()
 
-# Connect to ODrive
-print("Searching for ODrive...")
-odrv0 = odrive.find_sync()
-print(f"ODrive found! Firmware Version: {odrv0.fw_version_major}.{odrv0.fw_version_minor}.{odrv0.fw_version_revision}")
+# # Connect to ODrive
+# print("Searching for ODrive...")
+# odrv0 = odrive.find_sync()
+# print(f"ODrive found! Firmware Version: {odrv0.fw_version_major}.{odrv0.fw_version_minor}.{odrv0.fw_version_revision}")
 
-# Set up ODrive
-print("Setting up axis...")
-odrv0.clear_errors()
-odrv0.axis0.requested_state = AxisState.CLOSED_LOOP_CONTROL
-odrv0.axis0.controller.config.control_mode = ControlMode.TORQUE_CONTROL
-odrv0.axis0.config.motor.current_soft_max = 10  # Amps
+# # Set up ODrive
+# print("Setting up axis...")
+# odrv0.clear_errors()
+# odrv0.axis0.requested_state = AxisState.CLOSED_LOOP_CONTROL
+# odrv0.axis0.controller.config.control_mode = ControlMode.TORQUE_CONTROL
+# odrv0.axis0.config.motor.current_soft_max = 10  # Amps
 
 # get the similarity between two words
 def similarity(a, b):
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
-# classify the voice command word into "stronger" or "relax"
+# classify the voice command word into "stronger", "relax", "exit"
 def classify(command):
     # get the similarity between the voice command and "stronger" / "relax"
     up_sim = similarity(command, "stronger")
     down_sim = similarity(command, "relax")
+    exit_sim = similarity(command, "exit")
 
     # threshold for similarity is 0.4, if not met then return "white noise"
-    if up_sim > down_sim and up_sim > 0.4:
+    if up_sim > down_sim and up_sim > exit_sim and up_sim > 0.4:
         return "stronger"
-    elif down_sim > up_sim and down_sim > 0.4:
+    elif down_sim > up_sim and down_sim > exit_sim and down_sim > 0.4:
         return "relax"
+    elif exit_sim > up_sim and exit_sim > down_sim and exit_sim > 0.4:
+        return "exit"
     return "White Noise"
 
 # listening for voice commands
 def listen_for_commands():
-    global torque
+    global torque, listening, running
     while listening:
         try:
             with mic as source:
@@ -69,9 +72,13 @@ def listen_for_commands():
                     torque -= 0.1
                 elif word == "relax":
                     torque = min(0.0, torque + 0.1)
+                elif word == "exit":
+                    torque = 0
+                    listening = False
+                    running = False
 
-                # update the torque based on the voice command
-                set_torque(odrv0, torque)
+                # # update the torque based on the voice command
+                # set_torque(odrv0, torque)
 
         # handle errors
         except sr.WaitTimeoutError:
@@ -93,7 +100,7 @@ def start_voice_control():
     start_listening()
 
     # initialize torque at 0
-    global torque
+    global torque, listening, running
     torque = 0.0
 
     # boolean indicating we're waiting for user input_text of the initial torque
@@ -124,7 +131,7 @@ def start_voice_control():
                         # torque is negative due to the way we wind the motor
                         torque = -float(input_text)
                         input_mode = False
-                        set_torque(odrv0, torque)
+                        # set_torque(odrv0, torque)
                         start_listening()
 
                     # if failed, clear it
@@ -136,17 +143,17 @@ def start_voice_control():
                     input_text = input_text[:-1]
                 
                 # ignore invalid characters
-                elif event.unicode.isdigit() or (event.unicode == '.' and len(input_text) == 0):
+                elif event.unicode.isdigit() or event.unicode == '.':
                     input_text += event.unicode
 
         # update torque
-        set_torque(odrv0, torque)
+        # set_torque(odrv0, torque)
 
         # render torque text
         if input_mode:
             label = font.render("Enter a number: " + input_text, True, (235, 128, 52))
         else:
-            label = font.render("Torque: " + str(torque), True, (235, 128, 52))
+            label = font.render("Torque: " + str(-round(torque, 1)), True, (235, 128, 52))
 
         # draw the game screen 
         screen.blit(label, (50, 150))
@@ -157,6 +164,5 @@ def start_voice_control():
 
     # On quit, stop the motor and set to idle state
     print("Stopping motor...")
-    odrv0.axis0.controller.input_torque = 0
-    odrv0.axis0.requested_state = AxisState.IDLE
-    pygame.quit()
+    # odrv0.axis0.controller.input_torque = 0
+    # odrv0.axis0.requested_state = AxisState.IDLE

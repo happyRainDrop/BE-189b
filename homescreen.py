@@ -19,14 +19,14 @@ def draw_home_screen():
     # Clear the screen and draw the title and options
     screen.fill((30, 30, 30))
     title = font.render("Select Game Mode", True, (255, 255, 255))
-    screen.blit(title, (250, 100))
+    screen.blit(title, (100, 150))
 
     # draw each option
     for i, option in enumerate(options):
         # highlight the selected option
         color = (235, 128, 52) if i == selected else (200, 200, 200)
         text = font.render(option, True, color)
-        screen.blit(text, (300, 200 + i * 60))
+        screen.blit(text, (150, 250 + i * 60))
 
     pygame.display.flip()
 
@@ -73,6 +73,7 @@ while True:
         # start the voice-controlled game
         elif mode == "Constant Torque (Voice Controlled)":
             start_voice_control()
+    
     # redraw the home screen after handling input
     draw_home_screen()
 
