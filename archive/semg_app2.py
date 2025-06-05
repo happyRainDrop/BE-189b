@@ -9,6 +9,7 @@ import queue
 import time
 import sys
 import numpy as np
+from matplotlib.widgets import Slider 
 
 
 # ---- Constants ----
@@ -20,7 +21,7 @@ STREAM_CMD = bytes([3])
 
 CUTOFF = 20  # Cutoff frequency in Hz
 FS = 100  # EMG sampling rate must be >= 900–1000 Hz for 450 Hz upper cutoff
-BUFFER_SIZE = 3 * FS  # 3 seconds of data
+BUFFER_SIZE = FS * 3 # 3 seconds of data
 
 
 FILTER_ORDER = 4
@@ -73,6 +74,7 @@ def apply_filter(data, b, a):
     return lfilter(b, a, data)
 
 def live_plot():
+    peak_threshold = [200]  # Default initial threshold
     x_vals = []
     y_vals = []
     raw_buffer = deque(maxlen=BUFFER_SIZE)
@@ -84,6 +86,8 @@ def live_plot():
     total_peaks = [0]
     max_peak_amp = [0]
     max_peak_width = [0]  # In milliseconds
+    max_fft_amp_ever = [0]  # Use list for mutability inside loop
+
 
     plt.ion()
     fig, (ax_time, ax_freq) = plt.subplots(2, 1, figsize=(10, 8))
@@ -95,7 +99,7 @@ def live_plot():
     peak_line, = ax_time.plot([], [], 'rx', label="Detected Peaks")
     ax_time.set_xlabel("Time (s)")
     ax_time.set_ylabel("EMG Value")
-    ax_time.set_title("Live EMG Time Domain")
+    ax_time.set_title("Live EMG Time Domain", fontsize=10)
     ax_time.grid(True)
     ax_time.legend()
 
@@ -103,7 +107,7 @@ def live_plot():
     fft_line, = ax_freq.plot([], [], label="FFT")
     ax_freq.set_xlabel("Frequency (Hz)")
     ax_freq.set_ylabel("Amplitude")
-    ax_freq.set_title("Live EMG Frequency Spectrum")
+    ax_freq.set_title("Live EMG Frequency Spectrum", fontsize=10)
     ax_freq.grid(True)
     ax_freq.set_xlim(0, FS // 2)
     ax_freq.legend()
@@ -112,6 +116,13 @@ def live_plot():
     text_box = plt.axes([0.1, 0.01, 0.8, 0.1])
     info_text = text_box.text(0, 0.6, '', transform=text_box.transAxes, fontsize=10, verticalalignment='top')
     text_box.axis('off')
+
+    fft_info_ax = plt.axes([0.55, 0.01, 0.4, 0.1])
+    fft_info_text = fft_info_ax.text(0, 0.6, '', transform=fft_info_ax.transAxes,
+                                    fontsize=10, verticalalignment='top')
+    fft_info_ax.axis('off')
+
+
 
     # Button handlers
     def set_raw(event):
@@ -129,6 +140,16 @@ def live_plot():
     btn_filt = Button(ax_filt, 'Filtered')
     btn_raw.on_clicked(set_raw)
     btn_filt.on_clicked(set_filtered)
+
+    # Slider axis (x, y, width, height in figure coordinates)
+    ax_thresh = plt.axes([0.15, 0.10, 0.7, 0.03])
+    peak_thresh_slider = Slider(ax_thresh, 'Peak Height', valmin=0, valmax=1000, valinit=peak_threshold[0])
+
+    # Callback to update threshold value
+    def update_thresh(val):
+        peak_threshold[0] = peak_thresh_slider.val
+
+    peak_thresh_slider.on_changed(update_thresh)
 
     while True:
         try:
@@ -153,13 +174,24 @@ def live_plot():
                         fft_vals = np.abs(np.fft.rfft(windowed))
                         fft_freqs = np.fft.rfftfreq(FS, d=1.0/FS)
 
+
+
                         fft_line.set_xdata(fft_freqs)
                         fft_line.set_ydata(fft_vals)
+
+
+                        curr_max_fft_amp = np.max(fft_vals)
+
+                        if curr_max_fft_amp > max_fft_amp_ever[0]:
+                            max_fft_amp_ever[0] = curr_max_fft_amp
+                            fft_info_text.set_text(f"Max FFT Amplitude: {curr_max_fft_amp:.2f}")
+
+
 
                     filt_x = x_vals[-len(filt_y):]
 
                     # Peak detection
-                    peaks, props = find_peaks(filt_y, height=200, distance=10, width=5)
+                    peaks, props = find_peaks(filt_y, height=peak_threshold[0], distance=10, width=5)
 
                     total_peaks[0] += len(peaks)
 
