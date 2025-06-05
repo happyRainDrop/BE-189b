@@ -32,11 +32,11 @@ def fight_user_emg_based(odrv0):
     # EMG sampling rate must be >= 900–1000 Hz for 450 Hz upper cutoff
     FS = 100 
     # define the buffer to be 3 seconds of data
-    BUFFER_SIZE = 3 * FS  
+    BUFFER_SIZE = FS * 3
     # Butterworth filter order
     FILTER_ORDER = 4  
 
-    emg_window = deque(maxlen=FS * 2)  # 2-second moving average buffer (FS = 100 Hz → 200 samples)
+    emg_window = deque(maxlen=FS * 3)  # 2-second moving average buffer (FS = 100 Hz → 200 samples)
 
 
     # initialize EMG data lists
@@ -87,8 +87,6 @@ def fight_user_emg_based(odrv0):
     num_max_torque_times = 0
 
     # EMG average variables
-    emg_avg_val_voltages = []
-    emg_avg_val_times = []
     relaxed_emg_avg_value = -1
     emg_avg_value = 0
     emg_effort_val = 0
@@ -117,6 +115,7 @@ def fight_user_emg_based(odrv0):
     total_peaks = [0]
     max_peak_amp = [0]
     max_peak_width = [0]  # In milliseconds
+    max_fft_amp_ever = [0]  # Use list for mutability inside loop
 
 
 
@@ -128,8 +127,7 @@ def fight_user_emg_based(odrv0):
     plt.subplots_adjust(bottom=0.3, hspace=0.6)
 
 
-    peak_thresh_ax = plt.axes([0.1, 0.25, 0.3, 0.03])  # x, y, width, height
-    peak_thresh_slider = Slider(peak_thresh_ax, 'Peak Height', valmin=0, valmax=1000, valinit=200)
+
 
     # Reduce font size for all axis labels and titles to avoid overlap
     for ax in [ax_time, ax_freq, ax_torque]:
@@ -171,6 +169,12 @@ def fight_user_emg_based(odrv0):
     info_text = text_box.text(0, 0.6, '', transform=text_box.transAxes, fontsize=10, verticalalignment='top')
     text_box.axis('off')
 
+    fft_info_ax = plt.axes([0.55, 0.01, 0.4, 0.1])
+    fft_info_text = fft_info_ax.text(0, 0.6, '', transform=fft_info_ax.transAxes,
+                                    fontsize=10, verticalalignment='top')
+    fft_info_ax.axis('off')
+
+
     # button handlers
     def set_raw(event):
         plot_filtered[0] = False
@@ -190,6 +194,9 @@ def fight_user_emg_based(odrv0):
     # Stop Motor Button
     ax_stop = plt.axes([0.55, 0.15, 0.2, 0.075])
     btn_stop = Button(ax_stop, 'STOP MOTOR')
+
+    peak_thresh_ax = plt.axes([0.1, 0.25, 0.3, 0.03])  # x, y, width, height
+    peak_thresh_slider = Slider(peak_thresh_ax, 'Peak Height', valmin=0, valmax=1000, valinit=200)
 
     def stop_motor(event):
         global running
@@ -280,7 +287,6 @@ def fight_user_emg_based(odrv0):
         # Get EMG data from queue (queue is Arduino data stream)
         num_emg_data = 0
         emg_avg_value = 0
-        emg_avg_time = 0
         try:
             while not data_queue.empty():
                 #print(list(data_queue.queue))
@@ -335,6 +341,12 @@ def fight_user_emg_based(odrv0):
                         fft_line.set_xdata(fft_freqs)
                         fft_line.set_ydata(fft_vals)
 
+                        curr_max_fft_amp = np.max(fft_vals)
+
+                        if curr_max_fft_amp > max_fft_amp_ever[0]:
+                            max_fft_amp_ever[0] = curr_max_fft_amp
+                            fft_info_text.set_text(f"Max FFT Amplitude: {curr_max_fft_amp:.2f}")
+
                     # get the filtered time data post trim
                     filt_x = x_vals[-len(filt_y):]
 
@@ -365,7 +377,7 @@ def fight_user_emg_based(odrv0):
                     info_text.set_text(f"Peaks Detected: {total_peaks[0]}\n"
                                     f"Max Peak Amplitude: {max_peak_amp[0]:.2f}\n"
                                     f"Max Peak Width: {max_peak_width[0]:.2f} ms"
-                                    f"Peak Threshold: {peak_thresh:.1f}")
+                                    f"       Peak Threshold: {peak_thresh:.1f}")
                     
             # else add the unfiltered data to the corresponding plot
             else:
@@ -409,6 +421,7 @@ def fight_user_emg_based(odrv0):
     # Final stats
     total_time = time.time() - function_start_time2
     avg_torque = sum(torque_log) / len(torque_log) if torque_log else 0
+    avg_emg = sum(emg_data) / len(emg_data) if emg_data else 0
     plt.ioff()
     plt.close(fig)
 
@@ -423,9 +436,19 @@ def fight_user_emg_based(odrv0):
     df.to_csv(filename, index=False)
     print(f"Saved torque log to {filename}")
 
-    # Add subtitle with stats
-    subtitle = f"Average Torque: {avg_torque:.2f} Nm | Total Time: {total_time:.2f} s | Mode: EMG-depedent"
-    ax_torque.set_title('Torque vs Time\n' + subtitle)
+    # Save raw EMG data
+    emg_df = pd.DataFrame({
+        'time_sec': emg_timestamps,
+        'emg_voltage': emg_data
+    })
+    emg_filename = f"logs/emg_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    emg_df.to_csv(emg_filename, index=False)
+    print(f"Saved EMG log to {emg_filename}")
+
+
+    # Add subtitle with stats -- not used 
+    #subtitle = f"Average Torque: {avg_torque:.2f} Nm | Total Time: {total_time:.2f} s | Mode: EMG-depedent"
+    #ax_torque.set_title('Torque vs Time\n' + subtitle)
 
     # Save the figure
     plot_filename = filename.replace(".csv", ".png")
@@ -440,20 +463,16 @@ def fight_user_emg_based(odrv0):
     }
 
 def fight_machine():
-    
     try:
         # Setup
         odrv0 = find_odrive()
-
         # Confirming config settings
         odrv0.axis0.controller.config.vel_limit = 10.0    # Limiting the velocity (rad/s). LIMITS EFFECTIVE TORQUE SETPOINT
         odrv0.axis0.controller.config.vel_gain = 0.5      # Lower vel_gain for smoother motion. LIMITS EFFECTIVE TORQUE SETPOINT
         odrv0.axis0.config.motor.current_soft_max = 55    # The Flipsky can take up to 80A 
         odrv0.axis0.config.motor.current_hard_max = 75    
         odrv0.axis0.config.motor.current_control_bandwidth = 200
-        
         # odrv0.axis0.pos_estimate = 0  # Uncomment to set the current position as 0
-
         clear_errors(odrv0)
         axis = odrv0.axis0
 
